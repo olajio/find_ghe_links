@@ -5,3 +5,4 @@ python-docx>=1.1
 openpyxl>=3.1
 pypdf>=4.2
 pandas>=2.0
+xlrd>=2.0     # legacy .xls reading (values + hyperlinks)

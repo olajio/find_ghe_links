@@ -15,10 +15,11 @@ For every match it records:
 
 | Column | Meaning |
 |--------|---------|
+| `site` | The site/subsite the match was found in |
 | `source_type` | `page` or `document` |
 | `title` | Page title or file name |
 | `location_url` | Link to the page/document in SharePoint |
-| `match_type` | `hyperlink` (hidden behind text), `raw-text`, or `webpart-data` |
+| `match_type` | `hyperlink` (hidden behind text), `raw-text`, `webpart-data`, or `binary` |
 | `display_text` | The visible text the link hid behind (if any) |
 | `target_url` | The actual `ghe.hedgeserv.net/...` URL |
 
@@ -43,6 +44,8 @@ The defaults in `config.example.ini` are already set for
 ```bash
 python scraper.py                 # uses config.ini
 python scraper.py --no-documents  # pages only (faster)
+python scraper.py --recursive     # also crawl every subsite under site_path
+python scraper.py --site-path /sites/GlobalTechnology --recursive   # sweep the whole parent tree
 python scraper.py --verbose       # debug logging
 python scraper.py -c other.ini    # alternate config
 ```
@@ -89,16 +92,26 @@ Plus a console summary with counts by source type and match type.
   - `.docx` — text + hyperlink relationship targets
   - `.xlsx` — cell text + cell hyperlinks
   - `.pdf` — page text + URI link annotations
+  - `.xls` — cell text + hyperlinks (via `xlrd`)
+  - `.doc`, `.ppt` — raw OLE byte scan (ASCII + UTF-16-LE); recovers the URL but
+    not the display text, so these are typed `binary`
 
-  Files larger than `max_file_mb` (default 25 MB) are skipped. Legacy binary
-  formats (`.doc`, `.xls`, `.ppt`) are not parsed.
+  Files larger than `max_file_mb` (default 25 MB) are skipped.
 
 ## Scope
 
-Scoped to the single subsite configured in `config.ini`
-(`MonitoringAndAnalytics`). It does not walk up to the parent
-`GlobalTechnology` site or crawl sibling sites. To scan a different site,
-change `site_path`.
+By default, scoped to the single subsite configured in `config.ini`
+(`MonitoringAndAnalytics`) — it does not walk sibling sites.
+
+To crawl a site **and all its subsites**, use `--recursive` (or set
+`recurse_subsites = true` in `config.ini`). To sweep the whole parent tree,
+point `site_path` at `/sites/GlobalTechnology` and run recursively:
+
+```bash
+python scraper.py --site-path /sites/GlobalTechnology --recursive
+```
+
+The `site` column in the report tells you which site each match came from.
 
 ## Notes / limitations
 

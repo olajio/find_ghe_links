@@ -33,7 +33,7 @@ TOKEN_CACHE_FILE = ".token_cache.bin"
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 
-SUPPORTED_DOC_EXTS = {".docx", ".xlsx", ".pdf"}
+SUPPORTED_DOC_EXTS = {".docx", ".xlsx", ".pdf", ".doc", ".xls", ".ppt"}
 
 log = logging.getLogger("ghe_scraper")
 
@@ -43,10 +43,11 @@ log = logging.getLogger("ghe_scraper")
 # --------------------------------------------------------------------------- #
 @dataclass
 class Match:
+    site: str             # site display name / URL the match was found in
     source_type: str      # "page" | "document"
     title: str            # page title or file name
     location_url: str     # link to the page / document in SharePoint
-    match_type: str       # "hyperlink" | "raw-text" | "webpart-data"
+    match_type: str       # "hyperlink" | "raw-text" | "webpart-data" | "binary"
     display_text: str     # visible text the link hid behind (if any)
     target_url: str       # the actual ghe.hedgeserv.net URL
 
@@ -229,7 +230,9 @@ def iter_webparts(canvas: dict) -> Iterator[dict]:
         yield wp
 
 
-def crawl_pages(graph: Graph, site_id: str, needle: str, bare_re: re.Pattern) -> list[Match]:
+def crawl_pages(
+    graph: Graph, site_id: str, site_name: str, needle: str, bare_re: re.Pattern
+) -> list[Match]:
     matches: list[Match] = []
     url = (
         f"/sites/{site_id}/pages/microsoft.graph.sitePage"
@@ -259,14 +262,14 @@ def crawl_pages(graph: Graph, site_id: str, needle: str, bare_re: re.Pattern) ->
             inner_html = wp.get("innerHtml") or wp.get("innerHTML")
             if inner_html:
                 for mt, disp, target in scan_html(inner_html, needle, bare_re):
-                    matches.append(Match("page", title, web_url, mt, disp, target))
+                    matches.append(Match(site_name, "page", title, web_url, mt, disp, target))
                     page_hits += 1
             # Link web parts (Quick Links, Hero, …) keep URLs in JSON data, not
             # HTML — scan the serialized web part to catch those targets.
             data_blob = json.dumps(wp, ensure_ascii=False)
             if needle.lower() in data_blob.lower():
                 for m in set(bare_re.findall(data_blob)):
-                    matches.append(Match("page", title, web_url, "webpart-data", "", m))
+                    matches.append(Match(site_name, "page", title, web_url, "webpart-data", "", m))
                     page_hits += 1
 
         if page_hits:
@@ -398,11 +401,97 @@ def parse_pdf(data: bytes, needle: str, bare_re: re.Pattern) -> list[tuple[str, 
     return results
 
 
-DOC_PARSERS = {".docx": parse_docx, ".xlsx": parse_xlsx, ".pdf": parse_pdf}
+def parse_ole_raw(data: bytes, needle: str, bare_re: re.Pattern) -> list[tuple[str, str, str]]:
+    """
+    Fallback for legacy OLE2 binary formats (.doc, .ppt, and .xls when a
+    dedicated reader is unavailable).
+
+    These formats have no simple text/hyperlink API in pure Python, so we scan
+    the raw bytes for the needle in both ASCII and UTF-16-LE (Office stores most
+    text, including HYPERLINK field targets, in one of those). We can recover the
+    URL but not reliably associate display text, so matches are typed "binary".
+    """
+    # Decoded binary windows have no clean delimiters, so use a strict
+    # URL-legal character class (excludes CJK noise from adjacent bytes).
+    strict = re.compile(
+        r"[A-Za-z0-9._~:/?#@%&=+\-]*" + re.escape(needle) + r"[A-Za-z0-9._~:/?#@%&=+\-]*",
+        re.IGNORECASE,
+    )
+    results: list[tuple[str, str, str]] = []
+    seen: set[str] = set()
+    for enc in ("ascii", "utf-16-le"):
+        try:
+            token = needle.encode(enc)
+        except UnicodeEncodeError:
+            continue
+        start = 0
+        while True:
+            i = data.find(token, start)
+            if i == -1:
+                break
+            lo = max(0, i - 512)
+            # UTF-16-LE is 2 bytes/char; keep the window start on the same byte
+            # parity as the match so decoding stays aligned to char boundaries.
+            if enc == "utf-16-le" and (i - lo) % 2:
+                lo += 1
+            window = data[lo: i + 512].decode(enc, errors="ignore")
+            for raw in strict.findall(window):
+                # If a scheme is present, trim any leading junk before it.
+                k = raw.lower().find("http")
+                m = (raw[k:] if k > 0 else raw).strip(".")
+                if m and m not in seen:
+                    seen.add(m)
+                    results.append(("binary", "", m))
+            start = i + len(token)
+    return results
+
+
+def parse_xls(data: bytes, needle: str, bare_re: re.Pattern) -> list[tuple[str, str, str]]:
+    """Legacy .xls via xlrd (cell text + hyperlinks); falls back to raw scan."""
+    try:
+        import xlrd
+    except ImportError:
+        return parse_ole_raw(data, needle, bare_re)
+
+    needle_l = needle.lower()
+    try:
+        # formatting_info=True is what exposes hyperlink_map for .xls files.
+        book = xlrd.open_workbook(file_contents=data, formatting_info=True)
+    except Exception:
+        return parse_ole_raw(data, needle, bare_re)
+
+    results: list[tuple[str, str, str]] = []
+    for sheet in book.sheets():
+        for (row, col), link in (getattr(sheet, "hyperlink_map", {}) or {}).items():
+            url = getattr(link, "url_or_path", "") or ""
+            if url and needle_l in url.lower():
+                try:
+                    disp = str(sheet.cell_value(row, col))
+                except Exception:
+                    disp = ""
+                results.append(("hyperlink", disp, url))
+        for row in range(sheet.nrows):
+            for col in range(sheet.ncols):
+                val = sheet.cell_value(row, col)
+                if isinstance(val, str) and needle_l in val.lower():
+                    for m in bare_re.findall(val):
+                        results.append(("raw-text", "", m))
+    return results
+
+
+DOC_PARSERS = {
+    ".docx": parse_docx,
+    ".xlsx": parse_xlsx,
+    ".pdf": parse_pdf,
+    ".xls": parse_xls,
+    ".doc": parse_ole_raw,
+    ".ppt": parse_ole_raw,
+}
 
 
 def crawl_documents(
-    graph: Graph, site_id: str, needle: str, bare_re: re.Pattern, max_file_mb: int
+    graph: Graph, site_id: str, site_name: str, needle: str, bare_re: re.Pattern,
+    max_file_mb: int,
 ) -> list[Match]:
     matches: list[Match] = []
     drives = list(graph.paged(f"/sites/{site_id}/drives"))
@@ -430,7 +519,7 @@ def crawl_documents(
                 log.warning("  could not parse %s: %s", name, exc)
                 continue
             for mt, disp, target in hits:
-                matches.append(Match("document", name, web_url, mt, disp, target))
+                matches.append(Match(site_name, "document", name, web_url, mt, disp, target))
             if hits:
                 log.info("  %-50s %d hit(s)", name[:50], len(hits))
 
@@ -444,7 +533,7 @@ def dedupe(matches: list[Match]) -> list[Match]:
     seen = set()
     unique = []
     for m in matches:
-        key = (m.source_type, m.location_url, m.match_type, m.target_url, m.display_text)
+        key = (m.site, m.source_type, m.location_url, m.match_type, m.target_url, m.display_text)
         if key not in seen:
             seen.add(key)
             unique.append(m)
@@ -458,6 +547,7 @@ def write_report(matches: list[Match], csv_path: str, xlsx_path: str) -> None:
     df = pd.DataFrame(
         rows,
         columns=[
+            "site",
             "source_type",
             "title",
             "location_url",
@@ -483,6 +573,40 @@ def write_report(matches: list[Match], csv_path: str, xlsx_path: str) -> None:
     print("-" * 70)
 
 
+def discover_sites(
+    graph: Graph, root_id: str, root_web_url: str, recursive: bool
+) -> list[dict]:
+    """
+    Return [{id, webUrl, name}] for the root site, plus all nested subsites
+    when recursive is True (walks /sites/{id}/sites depth-first).
+    """
+    root_name = root_web_url.rstrip("/").split("/")[-1] or root_web_url or root_id
+    sites = [{"id": root_id, "webUrl": root_web_url, "name": root_name}]
+    if not recursive:
+        return sites
+
+    stack = [root_id]
+    seen = {root_id}
+    while stack:
+        sid = stack.pop()
+        try:
+            for sub in graph.paged(f"/sites/{sid}/sites"):
+                sub_id = sub.get("id")
+                if not sub_id or sub_id in seen:
+                    continue
+                seen.add(sub_id)
+                sites.append({
+                    "id": sub_id,
+                    "webUrl": sub.get("webUrl", ""),
+                    "name": sub.get("displayName") or sub.get("name") or sub.get("webUrl", ""),
+                })
+                stack.append(sub_id)
+        except requests.HTTPError as exc:
+            log.warning("Could not list subsites of %s: %s", sid, exc)
+
+    return sites
+
+
 # --------------------------------------------------------------------------- #
 # Config + main
 # --------------------------------------------------------------------------- #
@@ -502,6 +626,12 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="SharePoint -> GHE link scraper")
     parser.add_argument("-c", "--config", default="config.ini", help="Path to config file")
     parser.add_argument("--no-documents", action="store_true", help="Scan pages only")
+    parser.add_argument(
+        "--recursive", action="store_true",
+        help="Also crawl all subsites of the target site (e.g. point site_path at "
+             "the parent GlobalTechnology site to sweep everything under it).",
+    )
+    parser.add_argument("--site-path", help="Override site_path from the config file")
     parser.add_argument("--verbose", action="store_true", help="Debug logging")
     args = parser.parse_args(argv)
 
@@ -513,7 +643,8 @@ def main(argv=None) -> int:
 
     cfg = load_config(args.config)
     hostname = cfg.get("sharepoint", "hostname")
-    site_path = cfg.get("sharepoint", "site_path")
+    site_path = args.site_path or cfg.get("sharepoint", "site_path")
+    recursive = args.recursive or cfg.getboolean("sharepoint", "recurse_subsites", fallback=False)
     needle = cfg.get("search", "needle", fallback="ghe.hedgeserv.net")
     client_id = cfg.get("auth", "client_id")
     authority_tenant = cfg.get("auth", "authority_tenant", fallback="organizations")
@@ -532,11 +663,20 @@ def main(argv=None) -> int:
     site_id, site_web_url = resolve_site_id(graph, hostname, site_path)
     log.info("Site resolved: %s", site_web_url or site_id)
 
+    sites = discover_sites(graph, site_id, site_web_url, recursive)
+    if recursive:
+        log.info("Recursive mode: crawling %d site(s) (root + subsites).", len(sites))
+
     matches: list[Match] = []
-    matches += crawl_pages(graph, site_id, needle, bare_re)
-    if docs_enabled:
-        matches += crawl_documents(graph, site_id, needle, bare_re, max_file_mb)
-    else:
+    for site in sites:
+        if len(sites) > 1:
+            log.info("== Site: %s ==", site["webUrl"] or site["name"])
+        matches += crawl_pages(graph, site["id"], site["name"], needle, bare_re)
+        if docs_enabled:
+            matches += crawl_documents(
+                graph, site["id"], site["name"], needle, bare_re, max_file_mb
+            )
+    if not docs_enabled:
         log.info("Document scan disabled.")
 
     matches = dedupe(matches)
