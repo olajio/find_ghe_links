@@ -1,0 +1,8 @@
+msal>=1.28
+requests>=2.31
+beautifulsoup4>=4.12
+python-docx>=1.1
+openpyxl>=3.1
+pypdf>=4.2
+pandas>=2.0
+xlrd>=2.0     # legacy .xls reading (values + hyperlinks)
