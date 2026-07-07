@@ -54,6 +54,45 @@ playwright install chromium         # one-time: download the browser
 cp config.example.ini config.ini    # then edit if needed
 ```
 
+### If `playwright install chromium` fails with a certificate error
+
+On a corporate network you may see:
+
+```
+Error: self-signed certificate in certificate chain (SELF_SIGNED_CERT_IN_CHAIN)
+Failed to download Chrome for Testing ...
+```
+
+This means your company's TLS-inspection proxy is intercepting the download and
+Node.js doesn't trust its root CA. Three fixes, easiest first:
+
+**1. Use a browser you already have (no download needed) — recommended.**
+Skip `playwright install` entirely and point the tool at your installed Google
+Chrome or Microsoft Edge:
+
+```bash
+python browser_scraper.py --channel chrome      # or: --channel msedge
+```
+
+(or set `channel = chrome` under `[browser]` in `config.ini`). This is the
+simplest fix on a locked-down machine, since Chrome/Edge is almost always
+already installed.
+
+**2. Trust the corporate CA, then download.** Export your company's root CA to a
+`.pem` (from Keychain Access on macOS, or ask IT), then:
+
+```bash
+export NODE_EXTRA_CA_CERTS=/path/to/corporate-root-ca.pem
+playwright install chromium
+```
+
+**3. Last resort — disable TLS check for the one download** (only the install,
+and only if you trust your network):
+
+```bash
+NODE_TLS_REJECT_UNAUTHORIZED=0 playwright install chromium
+```
+
 Defaults target
 `https://hedgeservcorp.sharepoint.com/sites/GlobalTechnology/MonitoringAndAnalytics`.
 
@@ -65,6 +104,7 @@ python browser_scraper.py --no-documents  # pages only (faster)
 python browser_scraper.py --recursive     # also crawl every subsite under site_path
 python browser_scraper.py --site-path /sites/GlobalTechnology --recursive   # sweep the parent tree
 python browser_scraper.py --headless      # reuse a cached session with no window (see below)
+python browser_scraper.py --channel chrome # use installed Chrome/Edge (no Chromium download)
 python browser_scraper.py --verbose       # debug logging
 ```
 

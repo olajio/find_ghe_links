@@ -297,6 +297,11 @@ def main(argv=None) -> int:
         help="Run without a visible window (only works when a cached session in "
              f"{STATE_FILE} is still valid; can't do a fresh interactive login).",
     )
+    parser.add_argument(
+        "--channel",
+        help="Use an installed browser instead of Playwright's bundled Chromium "
+             "(e.g. 'chrome' or 'msedge'). Avoids needing 'playwright install'.",
+    )
     parser.add_argument("--verbose", action="store_true", help="Debug logging")
     args = parser.parse_args(argv)
 
@@ -314,6 +319,7 @@ def main(argv=None) -> int:
     docs_enabled = cfg.getboolean("documents", "enabled", fallback=True) and not args.no_documents
     max_file_mb = cfg.getint("documents", "max_file_mb", fallback=25)
     login_timeout = cfg.getint("browser", "login_timeout", fallback=300)
+    browser_channel = args.channel or cfg.get("browser", "channel", fallback="").strip()
     csv_path = cfg.get("output", "csv_path", fallback="ghe_links_report.csv")
     xlsx_path = cfg.get("output", "xlsx_path", fallback="ghe_links_report.xlsx")
 
@@ -323,7 +329,13 @@ def main(argv=None) -> int:
 
     matches: list[Match] = []
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=args.headless)
+        launch_kwargs = {"headless": args.headless}
+        if browser_channel:
+            # Use an already-installed browser (Chrome/Edge) so no Chromium
+            # download is needed — handy behind proxies that block the download.
+            launch_kwargs["channel"] = browser_channel
+            log.info("Using installed browser channel: %s", browser_channel)
+        browser = p.chromium.launch(**launch_kwargs)
         ctx_kwargs = {"accept_downloads": True}
         if os.path.exists(STATE_FILE):
             ctx_kwargs["storage_state"] = STATE_FILE
