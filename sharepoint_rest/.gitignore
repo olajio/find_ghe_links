@@ -1,0 +1,15 @@
+# Local config and auth artifacts
+config.ini
+.sp_token_cache.bin
+
+# Generated reports
+ghe_links_report.csv
+ghe_links_report.xlsx
+*.csv
+*.xlsx
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
