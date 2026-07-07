@@ -1,0 +1,15 @@
+# Local config and session state
+config.ini
+.sp_session.json
+
+# Generated reports
+ghe_links_report.csv
+ghe_links_report.xlsx
+*.csv
+*.xlsx
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
