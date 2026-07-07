@@ -1,0 +1,47 @@
+(.venv) HSE-NYC-MAC-142:sharepoint_browser oolajide$ playwright install chromium
+Downloading Chrome for Testing 148.0.7778.96 (playwright chromium v1223) from https://cdn.playwright.dev/builds/cft/148.0.7778.96/mac-x64/chrome-mac-x64.zip
+Error: self-signed certificate in certificate chain
+    at TLSSocket.onConnectSecure (node:internal/tls/wrap:1656:34)
+    at TLSSocket.emit (node:events:509:28)
+    at TLSSocket._finishInit (node:internal/tls/wrap:1102:8)
+    at ssl.onhandshakedone (node:internal/tls/wrap:888:12) {
+  code: 'SELF_SIGNED_CERT_IN_CHAIN'
+}
+Downloading Chrome for Testing 148.0.7778.96 (playwright chromium v1223) from https://cdn.playwright.dev/builds/cft/148.0.7778.96/mac-x64/chrome-mac-x64.zip
+Error: self-signed certificate in certificate chain
+    at TLSSocket.onConnectSecure (node:internal/tls/wrap:1656:34)
+    at TLSSocket.emit (node:events:509:28)
+    at TLSSocket._finishInit (node:internal/tls/wrap:1102:8)
+    at ssl.onhandshakedone (node:internal/tls/wrap:888:12) {
+  code: 'SELF_SIGNED_CERT_IN_CHAIN'
+}
+Downloading Chrome for Testing 148.0.7778.96 (playwright chromium v1223) from https://cdn.playwright.dev/builds/cft/148.0.7778.96/mac-x64/chrome-mac-x64.zip
+Error: self-signed certificate in certificate chain
+    at TLSSocket.onConnectSecure (node:internal/tls/wrap:1656:34)
+    at TLSSocket.emit (node:events:509:28)
+    at TLSSocket._finishInit (node:internal/tls/wrap:1102:8)
+    at ssl.onhandshakedone (node:internal/tls/wrap:888:12) {
+  code: 'SELF_SIGNED_CERT_IN_CHAIN'
+}
+Downloading Chrome for Testing 148.0.7778.96 (playwright chromium v1223) from https://cdn.playwright.dev/builds/cft/148.0.7778.96/mac-x64/chrome-mac-x64.zip
+Error: self-signed certificate in certificate chain
+    at TLSSocket.onConnectSecure (node:internal/tls/wrap:1656:34)
+    at TLSSocket.emit (node:events:509:28)
+    at TLSSocket._finishInit (node:internal/tls/wrap:1102:8)
+    at ssl.onhandshakedone (node:internal/tls/wrap:888:12) {
+  code: 'SELF_SIGNED_CERT_IN_CHAIN'
+}
+Downloading Chrome for Testing 148.0.7778.96 (playwright chromium v1223) from https://cdn.playwright.dev/builds/cft/148.0.7778.96/mac-x64/chrome-mac-x64.zip
+Error: self-signed certificate in certificate chain
+    at TLSSocket.onConnectSecure (node:internal/tls/wrap:1656:34)
+    at TLSSocket.emit (node:events:509:28)
+    at TLSSocket._finishInit (node:internal/tls/wrap:1102:8)
+    at ssl.onhandshakedone (node:internal/tls/wrap:888:12) {
+  code: 'SELF_SIGNED_CERT_IN_CHAIN'
+}
+Failed to install browsers
+Error: Failed to download Chrome for Testing 148.0.7778.96 (playwright chromium v1223), caused by
+Error: Download failure, code=1
+    at ChildProcess.<anonymous> (/Users/oolajide/PycharmProjects/find_ghe_links-main/sharepoint_browser/.venv/lib/python3.9/site-packages/playwright/driver/package/lib/coreBundle.js:27967:32)
+    at ChildProcess.emit (node:events:509:28)
+    at ChildProcess._handle.onexit (node:internal/child_process:295:12)
