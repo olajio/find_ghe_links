@@ -31,6 +31,7 @@ from matchers import (
     Match,
     build_patterns,
     dedupe,
+    scan_encoded,
     scan_html,
     write_report,
 )
@@ -218,19 +219,16 @@ def crawl_pages(sp: SharePoint, web: dict, needle: str, bare_re: re.Pattern) -> 
         for html in (it.get("CanvasContent1"), it.get("WikiField")):
             if not html:
                 continue
-            found: set[str] = set()
+            # scan_html handles rendered links and visible text; scan_encoded
+            # decodes the entity-encoded web-part JSON to catch link web parts
+            # (Quick Links / Hero). dedupe() later collapses the copies of each
+            # URL down to one clean row per page.
             for mt, disp, target in scan_html(html, needle, bare_re):
                 matches.append(Match(site_name, "page", page_title, page_url, mt, disp, target))
-                found.add(target)
                 page_hits += 1
-            # Web-part JSON (Quick Links / Hero) that HTML parsing didn't surface.
-            if needle.lower() in html.lower():
-                for m in set(bare_re.findall(html)):
-                    if m not in found and not any(m in t for t in found):
-                        matches.append(Match(site_name, "page", page_title, page_url,
-                                             "webpart-data", "", m))
-                        found.add(m)
-                        page_hits += 1
+            for mt, disp, target in scan_encoded(html, needle, bare_re):
+                matches.append(Match(site_name, "page", page_title, page_url, mt, disp, target))
+                page_hits += 1
         if page_hits:
             log.info("    %-48s %d hit(s)", page_title[:48], page_hits)
     return matches
