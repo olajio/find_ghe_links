@@ -11,6 +11,7 @@ See README.md for setup and usage.
 
 import argparse
 import configparser
+import html as _html
 import io
 import json
 import logging
@@ -19,7 +20,7 @@ import re
 import sys
 import time
 import zipfile
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, replace
 from typing import Iterable, Iterator, Optional
 from xml.etree import ElementTree as ET
 
@@ -529,15 +530,46 @@ def crawl_documents(
 # --------------------------------------------------------------------------- #
 # Reporting
 # --------------------------------------------------------------------------- #
+# Trailing characters to trim from a captured URL (prose punctuation, stray
+# quotes/brackets left over from surrounding markup or JSON).
+_TRAILING = "\"'.,;:!?)]}>  "
+
+
+def normalize_url(url: str) -> str:
+    """Canonicalize a captured URL so differently-encoded copies of the same
+    link collapse together: decode HTML entities and trim trailing punctuation."""
+    if not url:
+        return url
+    u = _html.unescape(url).strip()
+    u = _html.unescape(u)
+    return u.rstrip(_TRAILING)
+
+
+def _score(m: Match) -> int:
+    s = 0
+    if m.display_text and m.display_text != m.target_url:
+        s += 2
+    if m.match_type == "hyperlink":
+        s += 1
+    return s
+
+
 def dedupe(matches: list[Match]) -> list[Match]:
-    seen = set()
-    unique = []
+    """Collapse to one row per unique link per page, keeping the most
+    informative representative (preferring one that carries display text)."""
+    best: dict[tuple, Match] = {}
+    order: list[tuple] = []
     for m in matches:
-        key = (m.site, m.source_type, m.location_url, m.match_type, m.target_url, m.display_text)
-        if key not in seen:
-            seen.add(key)
-            unique.append(m)
-    return unique
+        norm = normalize_url(m.target_url)
+        disp = "" if (m.display_text or "") == norm else (m.display_text or "")
+        cleaned = replace(m, target_url=norm, display_text=disp)
+        key = (m.site, m.source_type, m.location_url, norm)
+        if key not in best:
+            best[key] = cleaned
+            order.append(key)
+        elif _score(cleaned) > _score(best[key]):
+            best[key] = cleaned
+    return [best[k] for k in order]
 
 
 def write_report(matches: list[Match], csv_path: str, xlsx_path: str) -> None:

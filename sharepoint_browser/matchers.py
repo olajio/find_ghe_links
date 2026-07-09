@@ -7,11 +7,12 @@ host both as raw text and hidden behind hyperlink display text, and always
 capture the FULL URL (domain + the URI path after it), not just the domain.
 """
 
+import html as _html
 import io
 import logging
 import re
 import zipfile
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, replace
 from xml.etree import ElementTree as ET
 
 # OOXML namespaces used when parsing .docx internals.
@@ -98,6 +99,25 @@ def scan_html(html: str, needle: str, bare_re: re.Pattern) -> list[tuple[str, st
 def scan_text(text: str, bare_re: re.Pattern) -> list[tuple[str, str, str]]:
     """Return raw-text matches from a plain-text blob."""
     return [("raw-text", "", m) for m in bare_re.findall(text or "")]
+
+
+def scan_encoded(markup: str, needle: str, bare_re: re.Pattern) -> list[tuple[str, str, str]]:
+    """Pull URLs out of entity-encoded markup (e.g. a modern page's
+    CanvasContent1, where link web parts store their target as HTML-entity-
+    encoded JSON inside data-* attributes).
+
+    Decoding first (&#58; -> :, &quot; -> ") turns the encoded blob into real
+    JSON, so the surrounding real quotes bound each URL — this catches web-part
+    links that the text/attribute pass may not surface, WITHOUT the giant
+    garbage strings a raw regex over the still-encoded markup would produce.
+    Deduping later collapses these against any hyperlink/raw-text copies.
+    """
+    if not markup:
+        return []
+    decoded = _html.unescape(markup)
+    if needle.lower() not in decoded.lower():
+        return []
+    return [("webpart-data", "", m) for m in set(bare_re.findall(decoded))]
 
 
 # --------------------------------------------------------------------------- #
@@ -286,15 +306,54 @@ DOC_PARSERS = {
 # --------------------------------------------------------------------------- #
 # Reporting
 # --------------------------------------------------------------------------- #
+# Trailing characters to trim from a captured URL (prose punctuation, stray
+# quotes/brackets left over from surrounding markup or JSON).
+_TRAILING = "\"'.,;:!?)]}>  "
+
+
+def normalize_url(url: str) -> str:
+    """Canonicalize a captured URL so differently-encoded copies of the same
+    link collapse together: decode HTML entities (&#58; -> :, &quot; -> ") and
+    trim trailing punctuation."""
+    if not url:
+        return url
+    u = _html.unescape(url).strip()
+    # unescape again in case the source was double-encoded.
+    u = _html.unescape(u)
+    return u.rstrip(_TRAILING)
+
+
+def _score(m: Match) -> int:
+    """Rank representations of the same link; higher wins when deduping."""
+    s = 0
+    if m.display_text and m.display_text != m.target_url:
+        s += 2  # a real, human-readable label (the "hidden behind text" case)
+    if m.match_type == "hyperlink":
+        s += 1
+    return s
+
+
 def dedupe(matches: list[Match]) -> list[Match]:
-    seen = set()
-    unique = []
+    """Collapse to one row per unique link per page.
+
+    The same URL is often found several ways on a single page (a rendered
+    <a href>, the web-part's JSON data, loose text) and in different encodings.
+    Group by (site, source_type, location, normalized URL) and keep the most
+    informative representative — preferring one that carries display text.
+    """
+    best: dict[tuple, Match] = {}
+    order: list[tuple] = []
     for m in matches:
-        key = (m.site, m.source_type, m.location_url, m.match_type, m.target_url, m.display_text)
-        if key not in seen:
-            seen.add(key)
-            unique.append(m)
-    return unique
+        norm = normalize_url(m.target_url)
+        disp = "" if (m.display_text or "") == norm else (m.display_text or "")
+        cleaned = replace(m, target_url=norm, display_text=disp)
+        key = (m.site, m.source_type, m.location_url, norm)
+        if key not in best:
+            best[key] = cleaned
+            order.append(key)
+        elif _score(cleaned) > _score(best[key]):
+            best[key] = cleaned
+    return [best[k] for k in order]
 
 
 def write_report(matches: list[Match], csv_path: str, xlsx_path: str) -> None:
